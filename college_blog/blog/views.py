@@ -1,10 +1,11 @@
 from django.db.models import Count
-
+from django.contrib.postgres.search import SearchVector
 from django.shortcuts import render
 from .models import Post
 from django.core.paginator import  EmptyPage, PageNotAnInteger, Paginator
 from django.core.mail import send_mail
 from taggit.models import Tag
+from django.contrib.postgres.search import TrigramSimilarity
 def post_list(request,tag_slug=None):
     post_list = Post.published.all()
     tag = None
@@ -70,7 +71,7 @@ class PostListView(ListView):
     context_object_name = 'posts'
     paginate_by = 3
     template_name = 'blog/post/list.html'
-from .forms import CommentForm, EmailPostForm
+from .forms import CommentForm, EmailPostForm,SearchForm
 def post_share(request, post_id):
     # Retrieve post by id
     post = get_object_or_404(
@@ -143,4 +144,35 @@ def post_comment(request, post_id):
             
         }
     )
-    
+def post_search(request):
+    form = SearchForm()
+    query = None
+    results = []
+    if 'query' in request.GET:
+        form = SearchForm(request.GET)
+        if form.is_valid():
+            query = form.cleaned_data['query']
+            search_vector = SearchVector('title', weight='A') + SearchVector('body', weight='B')
+            search_query = SearchQuery(query, config='spanish')
+            results = (
+                Post.published.annotate(
+                    similarity=TrigramSimilarity('title', query),
+                    search=search_vector,
+                    rank=SearchRank(search_vector, search_query)
+                ).filter(search=query, similarity__gt=0.1, rank__gte=0.3)
+                .order_by('-rank', '-similarity')
+            )
+    return render(
+        request,
+        'blog/post/search.html',
+        {
+            'form': form,
+            'query': query,
+            'results': results
+        }
+    )
+from django.contrib.postgres.search import (
+    SearchVector,
+    SearchQuery,
+    SearchRank
+)   
